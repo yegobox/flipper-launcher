@@ -138,11 +138,21 @@ impl AppEntry {
 }
 
 pub async fn fetch(client: &reqwest::Client, url: &str) -> Result<Manifest, String> {
-    let manifest: Manifest = client
+    let resp = client
         .get(url)
         .send()
         .await
-        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("could not reach the app catalog: {e}"))?;
+    // No catalog published yet (the first desktop release creates it): an
+    // empty list, not an error.
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(Manifest {
+            schema: SCHEMA,
+            apps: Vec::new(),
+        });
+    }
+    let manifest: Manifest = resp
+        .error_for_status()
         .map_err(|e| format!("could not reach the app catalog: {e}"))?
         .json()
         .await
@@ -231,6 +241,43 @@ mod tests {
         assert!(!is_newer("1.505.0", Some("1.505.0")));
         assert!(is_newer("1.0.0", None));
         assert!(!is_newer("garbage", None));
+    }
+
+    /// Serves one HTTP response on a local port and returns its URL.
+    fn serve_once(status: &'static str, body: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(sock.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 2 {
+                line.clear();
+            }
+            let _ = write!(
+                sock,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        format!("http://127.0.0.1:{port}/apps.json")
+    }
+
+    #[tokio::test]
+    async fn unpublished_catalog_is_empty_not_an_error() {
+        let url = serve_once("404 Not Found", "");
+        let m = fetch(&reqwest::Client::new(), &url).await.unwrap();
+        assert!(m.apps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn server_errors_are_still_errors() {
+        let url = serve_once("500 Internal Server Error", "");
+        assert!(fetch(&reqwest::Client::new(), &url)
+            .await
+            .unwrap_err()
+            .contains("500"));
     }
 
     #[test]

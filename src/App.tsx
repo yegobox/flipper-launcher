@@ -217,7 +217,9 @@ export default function App() {
 
         {apps === null && <p className="empty">Loading apps…</p>}
         {apps !== null && shown.length === 0 && (
-          <p className="empty">{apps.length === 0 ? "The app catalog is empty or could not be reached." : "No apps match."}</p>
+          <p className="empty">
+            {apps.length === 0 ? "No apps have been published to Atlas yet. They appear here as soon as they are." : "No apps match."}
+          </p>
         )}
 
         <div className="grid">
