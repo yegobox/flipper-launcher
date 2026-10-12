@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
+import logo from "./assets/logo.svg";
 import { api, formatBytes, type AppView, type LauncherInfo, type Notice, type Progress, type Settings } from "./api";
 
 export default function App() {
@@ -69,7 +70,7 @@ export default function App() {
     <div className="shell">
       <header className="top">
         <div className="brand">
-          <span className="mark">Y</span>
+          <img className="mark" src={logo} alt="" width={40} height={40} />
           <div>
             <h1>Yegobox</h1>
             <p>Your apps, always up to date</p>

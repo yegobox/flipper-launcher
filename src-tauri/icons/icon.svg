@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- App icon: the launcher "A" mark (src/assets/logo.svg) on a white rounded square. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#ffffff"/>
+  <rect x="64.5" y="64.5" width="895" height="895" rx="199.5" fill="none" stroke="#e5e7eb" stroke-width="1"/>
+  <g transform="translate(212 212) scale(6)" fill="#0b5cff">
+    <polygon points="8,92 40,8 60,8 92,92 70,92 50,36 30,92"/>
+    <polygon points="20,76 86,50 90,62 24,88"/>
+  </g>
+</svg>

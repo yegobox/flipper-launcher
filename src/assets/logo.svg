@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Yegobox Launcher">
+  <!-- Geometric "A" for App launcher; the slanted crossbar runs out past the right leg like a launch. -->
+  <g fill="#0b5cff">
+    <polygon points="8,92 40,8 60,8 92,92 70,92 50,36 30,92"/>
+    <polygon points="20,76 86,50 90,62 24,88"/>
+  </g>
+</svg>
