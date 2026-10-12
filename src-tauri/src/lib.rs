@@ -1,4 +1,4 @@
-//! Yegobox Launcher: installs Yegobox desktop apps from a signed catalog and
+//! Atlas (the Yegobox launcher): installs Yegobox desktop apps from a signed catalog and
 //! keeps them, and itself, up to date.
 //!
 //! Entry modes:
@@ -41,6 +41,8 @@ struct Shared {
     busy: Mutex<HashSet<String>>,
     notice: Mutex<Option<Notice>>,
     launcher_update: Mutex<Option<String>>,
+    /// Unix ms of the last successful catalog fetch (footer: "checked 2 min ago").
+    checked_at: Mutex<Option<u64>>,
 }
 
 impl Shared {
@@ -69,6 +71,10 @@ struct AppView {
     id: String,
     name: String,
     icon: Option<String>,
+    description: Option<String>,
+    website: Option<String>,
+    accent: Option<String>,
+    pub_date: Option<String>,
     installed: Option<String>,
     staged: Option<String>,
     previous: Option<String>,
@@ -128,6 +134,16 @@ fn views(app: &AppHandle, shared: &Shared) -> Vec<AppView> {
                 id: a.id.clone(),
                 name: a.name.clone(),
                 icon: a.icon.clone(),
+                description: a.description.clone(),
+                website: a.website.clone().filter(|w| w.starts_with("https://")),
+                accent: a.accent.clone().filter(|c| {
+                    c.len() == 7
+                        && c.starts_with('#')
+                        && c[1..].bytes().all(|b| b.is_ascii_hexdigit())
+                }),
+                pub_date: release
+                    .map(|r| r.pub_date.clone())
+                    .filter(|d| !d.is_empty()),
                 running: state.current.is_some() && launch::is_running(&paths),
                 installed: state.current,
                 staged: state.staged,
@@ -144,6 +160,10 @@ fn views(app: &AppHandle, shared: &Shared) -> Vec<AppView> {
 async fn refresh(shared: &Shared) -> Result<(), String> {
     let manifest = manifest::fetch(&shared.client, &manifest::manifest_url()).await?;
     *shared.manifest.lock().unwrap() = Some(manifest);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    *shared.checked_at.lock().unwrap() = Some(now);
     Ok(())
 }
 
@@ -490,6 +510,7 @@ struct LauncherInfo {
     version: String,
     platform: Option<&'static str>,
     update_ready: Option<String>,
+    checked_at: Option<u64>,
 }
 
 #[tauri::command]
@@ -498,6 +519,7 @@ fn launcher_info(app: AppHandle, shared: State<'_, Shared>) -> LauncherInfo {
         version: launcher_version(&app),
         platform: platform_key(),
         update_ready: shared.launcher_update.lock().unwrap().clone(),
+        checked_at: *shared.checked_at.lock().unwrap(),
     }
 }
 
@@ -512,12 +534,12 @@ fn restart_launcher(app: AppHandle) {
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Yegobox Launcher", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Atlas", true, None::<&str>)?;
     let check = MenuItem::with_id(app, "check", "Check for updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &check, &quit])?;
     let mut tray = TrayIconBuilder::with_id("main")
-        .tooltip("Yegobox Launcher")
+        .tooltip("Atlas")
         .menu(&menu);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
@@ -559,6 +581,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
@@ -589,6 +612,7 @@ pub fn run() {
                 busy: Mutex::new(HashSet::new()),
                 notice: Mutex::new(None),
                 launcher_update: Mutex::new(None),
+                checked_at: Mutex::new(None),
             });
             let handle = app.handle().clone();
             if let Some(id) = install_id.clone() {
@@ -629,7 +653,7 @@ pub fn run() {
             restart_launcher,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Yegobox Launcher")
+        .expect("error while building Atlas")
         .run(|_app, _event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {

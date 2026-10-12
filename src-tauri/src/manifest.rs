@@ -31,6 +31,14 @@ pub struct AppEntry {
     pub name: String,
     #[serde(default)]
     pub icon: Option<String>,
+    /// One line under the name, e.g. "Point of sale, stock and EBM receipts".
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub website: Option<String>,
+    /// Card accent colour, `#rrggbb`.
+    #[serde(default)]
+    pub accent: Option<String>,
     #[serde(default)]
     pub channels: BTreeMap<String, Channel>,
 }

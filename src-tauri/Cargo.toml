@@ -1,6 +1,6 @@
 [package]
 name = "yegobox-launcher"
-version = "0.1.2"
+version = "0.2.0"
 description = "Installs Yegobox apps and keeps them up to date"
 authors = ["Yegobox <info@yegobox.com>"]
 edition = "2021"
@@ -27,6 +27,7 @@ sysinfo = "0.39.6"
 tar = "0.4.46"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tokio = { version = "1.53.2", features = ["time"] }
 zip = "9.0.2"

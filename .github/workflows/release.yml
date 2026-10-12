@@ -95,8 +95,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: launcher-v__VERSION__
-          releaseName: Yegobox Launcher v__VERSION__
-          releaseBody: Download the installer for your computer below. Installed launchers update themselves.
+          releaseName: Atlas v__VERSION__
+          releaseBody: Download the installer for your computer below. Installed copies of Atlas update themselves.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
@@ -127,10 +127,10 @@ jobs:
               echo "::warning::no asset matching $pattern on $TAG"
             fi
           done <<'LIST'
-          *_x64-setup.exe YegoboxLauncher-Windows-x64-setup.exe
-          *_universal.dmg YegoboxLauncher-macOS.dmg
-          *_amd64.AppImage YegoboxLauncher-Linux-x86_64.AppImage
-          *_amd64.deb YegoboxLauncher-Linux-amd64.deb
+          *_x64-setup.exe Atlas-Windows-x64-setup.exe
+          *_universal.dmg Atlas-macOS.dmg
+          *_amd64.AppImage Atlas-Linux-x86_64.AppImage
+          *_amd64.deb Atlas-Linux-amd64.deb
           LIST
           ls -la out
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber out/*

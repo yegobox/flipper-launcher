@@ -1,5 +1,6 @@
 // Typed wrappers over the Rust commands in src-tauri/src/lib.rs.
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 export type AppStatus =
   | "unsupported"
@@ -14,6 +15,10 @@ export interface AppView {
   id: string;
   name: string;
   icon: string | null;
+  description: string | null;
+  website: string | null;
+  accent: string | null;
+  pubDate: string | null;
   installed: string | null;
   staged: string | null;
   previous: string | null;
@@ -47,6 +52,7 @@ export interface LauncherInfo {
   version: string;
   platform: string | null;
   updateReady: string | null;
+  checkedAt: number | null;
 }
 
 export const api = {
@@ -61,7 +67,35 @@ export const api = {
   launcherInfo: () => invoke<LauncherInfo>("launcher_info"),
   checkForUpdates: () => invoke<void>("check_for_updates"),
   restart: () => invoke<void>("restart_launcher"),
+  openUrl: (url: string) => openUrl(url),
 };
+
+export const RELEASES_URL = "https://github.com/yegobox/flipper-launcher/releases";
+export const WEBSITE_URL = "https://yegobox.com";
+export const GITHUB_URL = "https://github.com/yegobox/flipper-launcher";
+
+export function platformLabel(key: string | null): string {
+  if (!key) return "this computer";
+  if (key.startsWith("darwin")) return "macOS";
+  if (key.startsWith("windows")) return "Windows";
+  if (key.startsWith("linux")) return "Linux";
+  return key;
+}
+
+export function formatDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+export function timeAgo(ms: number | null, now: number): string {
+  if (!ms) return "not checked yet";
+  const min = Math.floor((now - ms) / 60000);
+  if (min < 1) return "checked just now";
+  if (min < 60) return `checked ${min} min ago`;
+  const h = Math.floor(min / 60);
+  return `checked ${h} h ago`;
+}
 
 export function formatBytes(n: number): string {
   if (!n) return "";

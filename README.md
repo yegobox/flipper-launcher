@@ -1,7 +1,10 @@
-# Yegobox Launcher
+# Atlas
 
-A small desktop app (Tauri 2) that installs Yegobox apps (Flipper POS for now)
-and keeps them up to date. It also keeps itself up to date.
+Atlas is the Yegobox app launcher: a small desktop app (Tauri 2) that installs
+Yegobox apps (Flipper POS for now) and keeps them up to date. It also keeps
+itself up to date. The repo keeps its original name, `flipper-launcher`, and
+the bundle identifier stays `com.yegobox.launcher` so existing installs keep
+their data and update in place.
 
 ```
 yegobox/flipper  desktop_launcher_release.yml
@@ -15,13 +18,13 @@ yegobox/flipper-launcher  release.yml (tag launcher-v*)
 
 | Computer | Installer |
 |---|---|
-| Windows 10/11 | [YegoboxLauncher-Windows-x64-setup.exe](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-Windows-x64-setup.exe) |
-| macOS (Apple Silicon and Intel) | [YegoboxLauncher-macOS.dmg](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-macOS.dmg) |
-| Linux (x86_64) | [AppImage](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-Linux-x86_64.AppImage) · [.deb](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-Linux-amd64.deb) |
+| Windows 10/11 | [Atlas-Windows-x64-setup.exe](https://github.com/yegobox/flipper-launcher/releases/latest/download/Atlas-Windows-x64-setup.exe) |
+| macOS (Apple Silicon and Intel) | [Atlas-macOS.dmg](https://github.com/yegobox/flipper-launcher/releases/latest/download/Atlas-macOS.dmg) |
+| Linux (x86_64) | [AppImage](https://github.com/yegobox/flipper-launcher/releases/latest/download/Atlas-Linux-x86_64.AppImage) · [.deb](https://github.com/yegobox/flipper-launcher/releases/latest/download/Atlas-Linux-amd64.deb) |
 
 These links always point at the newest release. To install:
 1. Run the installer.
-2. Open **Yegobox Launcher** and click **Install** on Flipper POS.
+2. Open **Atlas** and click **Install** on Flipper POS.
 
 After that, both the launcher and Flipper update themselves.
 
