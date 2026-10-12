@@ -11,6 +11,20 @@ yegobox/flipper-launcher  release.yml (tag launcher-v*)
   └─ release launcher-v<ver>    installers + latest.json   ← the launcher's own updates
 ```
 
+## Download
+
+| Computer | Installer |
+|---|---|
+| Windows 10/11 | [YegoboxLauncher-Windows-x64-setup.exe](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-Windows-x64-setup.exe) |
+| macOS (Apple Silicon and Intel) | [YegoboxLauncher-macOS.dmg](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-macOS.dmg) |
+| Linux (x86_64) | [AppImage](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-Linux-x86_64.AppImage) · [.deb](https://github.com/yegobox/flipper-launcher/releases/latest/download/YegoboxLauncher-Linux-amd64.deb) |
+
+These links always point at the newest release. To install:
+1. Run the installer.
+2. Open **Yegobox Launcher** and click **Install** on Flipper POS.
+
+After that, both the launcher and Flipper update themselves.
+
 ## How it works
 
 1. It fetches `apps.json` at startup and then every 6 hours. A dev build can
@@ -71,15 +85,19 @@ python3 -m http.server 8000
 
 ## One-time release setup
 
-1. Run `npx tauri signer generate -w ~/.tauri/yegobox-launcher.key`. Put the
-   public key in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.
-   Store the private key and its password as `TAURI_SIGNING_PRIVATE_KEY` and
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in **both** `yegobox/flipper-launcher`
-   and `yegobox/flipper`. Never commit the key.
+1. **Signing key: done (2026-10-12).** The private key and its password
+   live in `~/.tauri/yegobox-launcher.key` and `~/.tauri/yegobox-launcher.key.password`
+   on Richard's Mac (back both up to a password manager), and are stored as
+   `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in
+   **both** `yegobox/flipper-launcher` and `yegobox/flipper`. The public key is
+   in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`. Losing the
+   private key means installed launchers can never verify a new release, so
+   never rotate it casually and never commit it.
 2. **macOS:** you need a Developer ID Application certificate and
    notarization credentials. The secret names are listed in
    `.github/workflows/release.yml`.
 3. **Windows:** builds are unsigned for now, so SmartScreen shows "unknown
    publisher" until a code-signing certificate is added.
 4. To release, bump the version in `tauri.conf.json`, `Cargo.toml` and
-   `package.json`, then push the tag `launcher-v<version>`.
+   `package.json`, then push the tag `launcher-v<version>`. The workflow also
+   uploads fixed-name copies of each installer for the download links above.

@@ -84,3 +84,26 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+  # Installer names carry the version (and GitHub turns spaces into dots), so
+  # also attach each one under a fixed name: the download links on the website
+  # (releases/latest/download/<name>) then never change.
+  stable-names:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Attach fixed-name copies
+        run: |
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          TAG="launcher-v$VERSION"
+          mkdir -p dl out && cd dl
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*_x64-setup.exe' -p '*_universal.dmg' -p '*_amd64.AppImage' -p '*_amd64.deb'
+          ls -la
+          cp ./*_x64-setup.exe ../out/YegoboxLauncher-Windows-x64-setup.exe
+          cp ./*_universal.dmg ../out/YegoboxLauncher-macOS.dmg
+          cp ./*_amd64.AppImage ../out/YegoboxLauncher-Linux-x86_64.AppImage
+          cp ./*_amd64.deb ../out/YegoboxLauncher-Linux-amd64.deb
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber ../out/*
