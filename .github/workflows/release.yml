@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Linux webview deps
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: swatinem/rust-cache@v2
         with:
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Linux webview deps
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
@@ -65,17 +65,34 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - uses: tauri-apps/tauri-action@v0
+      - name: macOS signing
+        # A missing secret arrives as an empty variable, and the bundler would
+        # try to import an empty certificate. Export the Apple variables only
+        # when a certificate exists; otherwise ad-hoc sign ("-"), which Apple
+        # Silicon needs to run the app at all (users then confirm it once in
+        # System Settings → Privacy & Security, as it is not notarized).
+        if: runner.os == 'macOS'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ -z "$APPLE_CERTIFICATE" ]]; then
+            echo "::warning::No Apple certificate: the macOS app is ad-hoc signed and not notarized."
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            { echo "$v<<__EOF__"; printf '%s\n' "${!v}"; echo "__EOF__"; } >> "$GITHUB_ENV"
+          done
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: launcher-v__VERSION__
           releaseName: Yegobox Launcher v__VERSION__
@@ -90,6 +107,8 @@ jobs:
   # (releases/latest/download/<name>) then never change.
   stable-names:
     needs: release
+    # Still attach whatever built when one platform failed.
+    if: always() && needs.release.result != 'skipped'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,11 +118,19 @@ jobs:
         run: |
           VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           TAG="launcher-v$VERSION"
-          mkdir -p dl out && cd dl
-          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*_x64-setup.exe' -p '*_universal.dmg' -p '*_amd64.AppImage' -p '*_amd64.deb'
-          ls -la
-          cp ./*_x64-setup.exe ../out/YegoboxLauncher-Windows-x64-setup.exe
-          cp ./*_universal.dmg ../out/YegoboxLauncher-macOS.dmg
-          cp ./*_amd64.AppImage ../out/YegoboxLauncher-Linux-x86_64.AppImage
-          cp ./*_amd64.deb ../out/YegoboxLauncher-Linux-amd64.deb
-          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber ../out/*
+          mkdir -p out
+          while read -r pattern name; do
+            rm -rf dl && mkdir dl
+            if gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "$pattern" -D dl; then
+              cp dl/* "out/$name"
+            else
+              echo "::warning::no asset matching $pattern on $TAG"
+            fi
+          done <<'LIST'
+          *_x64-setup.exe YegoboxLauncher-Windows-x64-setup.exe
+          *_universal.dmg YegoboxLauncher-macOS.dmg
+          *_amd64.AppImage YegoboxLauncher-Linux-x86_64.AppImage
+          *_amd64.deb YegoboxLauncher-Linux-amd64.deb
+          LIST
+          ls -la out
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber out/*
