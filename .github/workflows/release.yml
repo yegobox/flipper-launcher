@@ -37,8 +37,38 @@ jobs:
       - run: npm ci && npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
-  release:
+  # One draft release, created up front. The three build jobs only upload to
+  # it (by id): when each created its own, they raced and v0.2.1 came out as
+  # two releases, with Windows in the one that wasn't "Latest".
+  create-release:
     needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.r.outputs.id }}
+      tag: ${{ steps.r.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: r
+        run: |
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          TAG="launcher-v$VERSION"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG is already published; bump the version"; exit 1
+          fi
+          # Re-run of a failed release: reuse its draft.
+          ID="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | head -1)"
+          if [[ -z "$ID" ]]; then
+            ID="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
+              -f name="Atlas v$VERSION" -F draft=true \
+              -f body="Download the installer for your computer below. Installed copies of Atlas update themselves." --jq .id)"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -94,43 +124,71 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: launcher-v__VERSION__
-          releaseName: Atlas v__VERSION__
-          releaseBody: Download the installer for your computer below. Installed copies of Atlas update themselves.
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
+          releaseId: ${{ needs.create-release.outputs.id }}
+          # Written once by `publish` from all three platforms' .sig files;
+          # three jobs merging one latest.json can drop a platform.
+          includeUpdaterJson: false
           args: ${{ matrix.args }}
 
-  # Installer names carry the version (and GitHub turns spaces into dots), so
-  # also attach each one under a fixed name: the download links on the website
-  # (releases/latest/download/<name>) then never change.
-  stable-names:
-    needs: release
-    # Still attach whatever built when one platform failed.
-    if: always() && needs.release.result != 'skipped'
+  # Only when all three platforms built: add fixed-name installer copies (the
+  # website links releases/latest/download/<name> never change), write the
+  # updater feed latest.json, then publish the draft as Latest. A partial build
+  # stays a draft, so "Latest" never points at a release missing a platform.
+  publish:
+    needs: [create-release, release]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ID: ${{ needs.create-release.outputs.id }}
+      TAG: ${{ needs.create-release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      - name: Attach fixed-name copies
+      - name: Download build outputs
         run: |
+          mkdir -p dl out
+          gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '.assets[] | "\(.id) \(.name)"' | while read -r aid name; do
+            gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$aid" > "dl/$name"
+          done
+          ls -la dl
+      - name: Fixed-name copies + latest.json
+        run: |
+          set -euo pipefail
           VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
-          TAG="launcher-v$VERSION"
-          mkdir -p out
-          while read -r pattern name; do
-            rm -rf dl && mkdir dl
-            if gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "$pattern" -D dl; then
-              cp dl/* "out/$name"
-            else
-              echo "::warning::no asset matching $pattern on $TAG"
-            fi
-          done <<'LIST'
-          *_x64-setup.exe Atlas-Windows-x64-setup.exe
-          *_universal.dmg Atlas-macOS.dmg
-          *_amd64.AppImage Atlas-Linux-x86_64.AppImage
-          *_amd64.deb Atlas-Linux-amd64.deb
-          LIST
-          ls -la out
-          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber out/*
+          pick() { local f; f="$(find dl -maxdepth 1 -name "$1" | head -1)"; [[ -n "$f" ]] || { echo "::error::no $1 in the draft"; exit 1; }; echo "$f"; }
+          WIN="$(pick '*_x64-setup.exe')"; DMG="$(pick '*_universal.dmg')"
+          MACUPD="$(pick '*_universal.app.tar.gz')"; APPIMG="$(pick '*_amd64.AppImage')"; DEB="$(pick '*_amd64.deb')"
+          cp "$WIN" out/Atlas-Windows-x64-setup.exe
+          cp "$DMG" out/Atlas-macOS.dmg
+          cp "$APPIMG" out/Atlas-Linux-x86_64.AppImage
+          cp "$DEB" out/Atlas-Linux-amd64.deb
+          python3 - "$VERSION" "$TAG" "$GITHUB_REPOSITORY" "$WIN" "$MACUPD" "$APPIMG" "$DEB" > out/latest.json <<'PY'
+          import json, sys, os, urllib.parse, datetime
+          version, tag, repo, win, mac, appimg, deb = sys.argv[1:]
+          def entry(path):
+              sig = open(path + ".sig").read().strip()
+              url = f"https://github.com/{repo}/releases/download/{tag}/{urllib.parse.quote(os.path.basename(path))}"
+              return {"signature": sig, "url": url}
+          p = {}
+          p["windows-x86_64"] = p["windows-x86_64-nsis"] = entry(win)
+          for arch in ("aarch64", "x86_64"):
+              p[f"darwin-{arch}"] = p[f"darwin-{arch}-app"] = entry(mac)
+          p["linux-x86_64"] = p["linux-x86_64-appimage"] = entry(appimg)
+          p["linux-x86_64-deb"] = entry(deb)
+          print(json.dumps({
+              "version": version,
+              "notes": "Download the installer for your computer below. Installed copies of Atlas update themselves.",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "platforms": p,
+          }, indent=2))
+          PY
+          jq -r '.platforms | keys | join(", ")' out/latest.json
+      - name: Upload and publish
+        run: |
+          for f in out/*; do
+            name="$(basename "$f")"
+            old="$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq ".assets[] | select(.name == \"$name\") | .id")"
+            [[ -n "$old" ]] && gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"
+            gh api --method POST -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$ID/assets?name=$name" --input "$f" --jq .name
+          done
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -F draft=false -f make_latest=true --jq '"published " + .tag_name'
