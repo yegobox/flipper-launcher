@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="1024" height="1024">
+  <!-- Android launcher icon: the Atlas "A" (src/assets/logo.svg) on white, scaled
+       into the adaptive-icon safe zone (the middle 66 of 108 dp) so a circle or
+       squircle mask never clips it. Desktop uses the bare mark (icon.svg). -->
+  <rect width="100" height="100" fill="#ffffff"/>
+  <g fill="#0b5cff" transform="translate(50 50) scale(0.5) translate(-50 -50)">
+    <polygon points="8,92 40,8 60,8 92,92 70,92 50,36 30,92"/>
+    <polygon points="20,76 86,50 90,62 24,88"/>
+  </g>
+</svg>
