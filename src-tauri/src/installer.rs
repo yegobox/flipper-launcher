@@ -292,6 +292,8 @@ mod tests {
             signature: sign(keys, &bytes),
             size: bytes.len() as u64,
             entry: entry.into(),
+            package: None,
+            version_code: None,
         };
         (release, path)
     }
@@ -543,6 +545,8 @@ mod tests {
             signature: sign(&keys, &bytes),
             size: bytes.len() as u64,
             entry: "flipper.app".into(),
+            package: None,
+            version_code: None,
         };
         stage(&paths, &release, &archive, &keys.pubkey_b64, false).unwrap();
         let fw = paths
