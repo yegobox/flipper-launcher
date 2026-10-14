@@ -1,6 +1,6 @@
 [package]
 name = "yegobox-launcher"
-version = "0.2.2"
+version = "0.3.0"
 description = "Installs Yegobox apps and keeps them up to date"
 authors = ["Yegobox <info@yegobox.com>"]
 edition = "2021"
