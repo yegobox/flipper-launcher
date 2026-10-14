@@ -135,7 +135,7 @@ export default function App() {
   ];
 
   return (
-    <div className="shell">
+    <div className={`shell ${isAndroid ? "android" : ""}`}>
       <header className={`bar ${info?.platform?.startsWith("darwin") ? "mac" : ""}`} data-tauri-drag-region>
         <div className="bar-brand">
           <Wordmark />

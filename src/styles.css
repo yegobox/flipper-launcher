@@ -160,3 +160,8 @@ button:disabled { cursor: default; opacity: 0.5; }
   .foot { flex-direction: column; align-items: flex-start; gap: 8px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
   .foot-links { flex-wrap: wrap; gap: 14px; }
 }
+
+/* Android draws the app edge to edge, under the status and navigation bars,
+   and older WebViews report no safe-area inset, so keep a minimum. */
+.shell.android .bar { box-sizing: content-box; padding-top: max(env(safe-area-inset-top, 0px), 28px); }
+.shell.android .foot { padding-bottom: max(env(safe-area-inset-bottom, 0px), 18px); }
