@@ -4399,6 +4399,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-atlas-android"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
 name = "tauri-plugin-autostart"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5733,6 +5742,7 @@ dependencies = [
  "base64 0.23.1",
  "flate2",
  "futures-util",
+ "jni 0.21.1",
  "minisign",
  "minisign-verify",
  "mslnk",
@@ -5745,12 +5755,14 @@ dependencies = [
  "tar",
  "tauri",
  "tauri-build",
+ "tauri-plugin-atlas-android",
  "tauri-plugin-autostart",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "webpki-root-certs",
  "zip 9.0.2",
 ]
 

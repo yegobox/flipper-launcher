@@ -1,0 +1,72 @@
+name: Build signed Atlas APK
+description: >-
+  Generates the Android project, builds a universal release APK (arm64 +
+  armv7) and signs it with Atlas's release key. Shared by CI and releases so
+  both build the same thing.
+
+inputs:
+  keystore-base64:
+    required: true
+  keystore-password:
+    required: true
+  key-alias:
+    required: true
+  output:
+    description: Path of the signed APK to write
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
+    - uses: android-actions/setup-android@v3
+    - name: Android NDK
+      shell: bash
+      run: |
+        sdkmanager --install "ndk;27.2.12479018" > /dev/null
+        echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+    - uses: dtolnay/rust-toolchain@1.95.0
+      with:
+        targets: aarch64-linux-android,armv7-linux-androideabi
+    - uses: swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+        key: android
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - shell: bash
+      run: npm ci
+    - name: Generate the Android project
+      shell: bash
+      # src-tauri/gen/android is generated, not committed: Atlas's Android
+      # code lives in plugins/tauri-plugin-atlas-android.
+      run: |
+        npx tauri android init --ci
+        npx tauri icon src-tauri/icons/icon.svg
+    - name: Build
+      shell: bash
+      run: npx tauri android build --apk --target aarch64 armv7 --ci
+    - name: Sign
+      shell: bash
+      env:
+        KEYSTORE: ${{ inputs.keystore-base64 }}
+        KS_PASS: ${{ inputs.keystore-password }}
+        ALIAS: ${{ inputs.key-alias }}
+        OUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+        [[ -n "$KEYSTORE" ]] || { echo "::error::ATLAS_ANDROID_KEYSTORE_BASE64 is not set; refusing to ship an unsigned APK"; exit 1; }
+        APK="$(find src-tauri/gen/android/app/build/outputs/apk -name '*release-unsigned.apk' | head -1)"
+        [[ -n "$APK" ]] || { echo "::error::no unsigned release APK was built"; find src-tauri/gen/android/app/build/outputs -name '*.apk'; exit 1; }
+        BT="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+        echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/atlas.jks"
+        "$BT/zipalign" -f -p 4 "$APK" "$RUNNER_TEMP/aligned.apk"
+        "$BT/apksigner" sign --ks "$RUNNER_TEMP/atlas.jks" --ks-pass env:KS_PASS --ks-key-alias "$ALIAS" \
+          --out "$OUT" "$RUNNER_TEMP/aligned.apk"
+        rm -f "$RUNNER_TEMP/atlas.jks"
+        "$BT/apksigner" verify --print-certs "$OUT" | grep -E "certificate SHA-256"
+        "$BT/aapt2" dump badging "$OUT" | head -1

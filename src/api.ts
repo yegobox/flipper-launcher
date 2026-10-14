@@ -9,7 +9,9 @@ export type AppStatus =
   | "needs_launcher_update"
   | "update_available"
   | "update_staged"
-  | "up_to_date";
+  | "up_to_date"
+  /** Android: the app ships through Google Play and isn't installed. */
+  | "on_play";
 
 export interface AppView {
   id: string;
@@ -67,6 +69,9 @@ export const api = {
   launcherInfo: () => invoke<LauncherInfo>("launcher_info"),
   checkForUpdates: () => invoke<void>("check_for_updates"),
   restart: () => invoke<void>("restart_launcher"),
+  /** Android only: may Atlas install apps ("Install unknown apps")? */
+  androidCanInstall: () => invoke<boolean>("android_can_install"),
+  androidOpenInstallSettings: () => invoke<void>("android_open_install_settings"),
   openUrl: (url: string) => openUrl(url),
 };
 
@@ -79,6 +84,7 @@ export function platformLabel(key: string | null): string {
   if (key.startsWith("darwin")) return "macOS";
   if (key.startsWith("windows")) return "Windows";
   if (key.startsWith("linux")) return "Linux";
+  if (key === "android") return "Android";
   return key;
 }
 
