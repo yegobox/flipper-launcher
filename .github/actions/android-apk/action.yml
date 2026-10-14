@@ -12,8 +12,14 @@ inputs:
   key-alias:
     required: true
   output:
-    description: Path of the signed APK to write
+    description: Path of the APK to write
     required: true
+  targets:
+    description: Rust/Android targets for `tauri android build --target`
+    default: aarch64 armv7
+  debug:
+    description: "true = debug build signed with the debug key (emulator smoke test); skips the release key"
+    default: "false"
 
 runs:
   using: composite
@@ -52,10 +58,26 @@ runs:
       run: |
         npx tauri android init --ci
         npx tauri icon src-tauri/icons/icon.svg
+        # Android gets its own launcher icon: the mark inside the adaptive-icon
+        # safe zone on white, so circle/squircle masks don't clip it.
+        npx tauri icon src-tauri/icons/android-icon.svg -o "$RUNNER_TEMP/android-icons"
+        cp -R "$RUNNER_TEMP/android-icons/android/." src-tauri/gen/android/app/src/main/res/
     - name: Build
       shell: bash
-      run: npx tauri android build --apk --target aarch64 armv7 --ci
+      env:
+        TARGETS: ${{ inputs.targets }}
+        DEBUG: ${{ inputs.debug }}
+        OUT: ${{ inputs.output }}
+      run: |
+        # shellcheck disable=SC2086
+        if [[ "$DEBUG" == "true" ]]; then
+          npx tauri android build --apk --debug --target $TARGETS --ci
+          cp "$(find src-tauri/gen/android/app/build/outputs/apk -name '*-debug.apk' | head -1)" "$OUT"
+        else
+          npx tauri android build --apk --target $TARGETS --ci
+        fi
     - name: Sign
+      if: inputs.debug != 'true'
       shell: bash
       env:
         KEYSTORE: ${{ inputs.keystore-base64 }}

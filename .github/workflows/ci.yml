@@ -49,3 +49,53 @@ jobs:
           name: atlas-android-apk
           path: Atlas-Android.apk
           retention-days: 14
+
+  # Boots an Android 14 emulator, installs a debug x86_64 build, launches
+  # Atlas and fails if it isn't running 30 s later. The screenshot and logcat
+  # are uploaded either way, so a crash on a phone can be read here.
+  android-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: ./.github/actions/android-apk
+        with:
+          keystore-base64: unused
+          keystore-password: unused
+          key-alias: unused
+          output: atlas-debug.apk
+          targets: x86_64
+          debug: "true"
+      - name: Run on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: |
+            adb install -r atlas-debug.apk
+            adb shell pm grant com.yegobox.launcher android.permission.POST_NOTIFICATIONS
+            adb logcat -c
+            adb shell monkey -p com.yegobox.launcher -c android.intent.category.LAUNCHER 1
+            sleep 30
+            adb exec-out screencap -p > smoke.png
+            adb logcat -d > logcat.txt
+            adb shell pidof com.yegobox.launcher > pid.txt || true
+            adb logcat -d --pid="$(cat pid.txt)" > app-log.txt || true
+            grep -E "FATAL|panicked|Tauri|RustStdoutStderr|chromium|Console" app-log.txt | tail -80 || true
+            test -s pid.txt || (echo "::error::Atlas is not running 30 s after launch" && exit 1)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-smoke
+          path: |
+            smoke.png
+            logcat.txt
+            app-log.txt
+          if-no-files-found: ignore
