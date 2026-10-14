@@ -37,11 +37,16 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(Date.now());
+  /** Android: false until the user allows Atlas to install apps. */
+  const [canInstall, setCanInstall] = useState(true);
+  const isAndroid = info?.platform === "android";
 
   const reload = useCallback(async () => {
     try {
       setApps(await api.listApps());
-      setInfo(await api.launcherInfo());
+      const li = await api.launcherInfo();
+      setInfo(li);
+      if (li.platform === "android") setCanInstall(await api.androidCanInstall());
       const n = await api.takeNotice();
       if (n) setNotice(n);
     } catch (e) {
@@ -55,6 +60,9 @@ export default function App() {
     reload();
     api.getSettings().then(setSettings);
     const tick = setInterval(() => setNow(Date.now()), 30_000);
+    // Android: coming back from the "Install unknown apps" setting.
+    const onVisible = () => document.visibilityState === "visible" && reload();
+    document.addEventListener("visibilitychange", onVisible);
     const unlisten = [
       listen("apps-changed", () => reload()),
       listen<Progress>("progress", (e) => setProgress((p) => ({ ...p, [e.payload.id]: e.payload }))),
@@ -63,6 +71,7 @@ export default function App() {
     ];
     return () => {
       clearInterval(tick);
+      document.removeEventListener("visibilitychange", onVisible);
       unlisten.forEach((u) => u.then((f) => f()));
     };
   }, [reload]);
@@ -187,7 +196,18 @@ export default function App() {
           </Banner>
         )}
 
-        {showSettings && settings && <SettingsPanel settings={settings} onChange={saveSettings} />}
+        {isAndroid && !canInstall && (
+          <Banner tag="Setup" tone="amber" onClose={() => setCanInstall(true)}>
+            <span>Allow Atlas to install apps, so it can install and update them for you.</span>
+            <div className="banner-actions">
+              <button className="btn-solid" onClick={() => api.androidOpenInstallSettings()}>
+                Allow
+              </button>
+            </div>
+          </Banner>
+        )}
+
+        {showSettings && settings && <SettingsPanel settings={settings} onChange={saveSettings} android={isAndroid} />}
 
         <div className="toolbar">
           <div className="segments" role="tablist">
@@ -303,6 +323,14 @@ function AppCard(props: {
   let pill: { text: string; tone: string };
   let action: ReactNode;
   switch (app.status) {
+    case "on_play":
+      pill = { text: "On Google Play", tone: "blue" };
+      action = (
+        <button className="btn-solid wide" onClick={props.onOpen}>
+          Get it on Google Play
+        </button>
+      );
+      break;
     case "unsupported":
       pill = { text: "Not available for this computer", tone: "grey" };
       action = (
@@ -452,7 +480,7 @@ function AppCard(props: {
   );
 }
 
-function SettingsPanel({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
+function SettingsPanel({ settings, onChange, android }: { settings: Settings; onChange: (s: Settings) => void; android: boolean }) {
   return (
     <section className="settings">
       <span className="banner-tag plain">Settings</span>
@@ -467,14 +495,17 @@ function SettingsPanel({ settings, onChange }: { settings: Settings; onChange: (
         <input type="checkbox" checked={settings.auto_update} onChange={(e) => onChange({ ...settings, auto_update: e.target.checked })} />
         <span className="label">Auto-update apps</span>
       </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={settings.launch_at_login}
-          onChange={(e) => onChange({ ...settings, launch_at_login: e.target.checked })}
-        />
-        <span className="label">Start at login</span>
-      </label>
+      {/* Android checks in the background on its own schedule. */}
+      {!android && (
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={settings.launch_at_login}
+            onChange={(e) => onChange({ ...settings, launch_at_login: e.target.checked })}
+          />
+          <span className="label">Start at login</span>
+        </label>
+      )}
     </section>
   );
 }

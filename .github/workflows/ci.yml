@@ -1,0 +1,51 @@
+name: CI
+
+# Desktop tests and a signed Android APK for every branch and pull request,
+# so Android changes are built (Kotlin plugin, JNI, Gradle) before a release.
+# The APK is uploaded as an artifact for testing on a phone.
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux webview deps
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci && npm run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/android-apk
+        with:
+          keystore-base64: ${{ secrets.ATLAS_ANDROID_KEYSTORE_BASE64 }}
+          keystore-password: ${{ secrets.ATLAS_ANDROID_KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.ATLAS_ANDROID_KEY_ALIAS }}
+          output: Atlas-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlas-android-apk
+          path: Atlas-Android.apk
+          retention-days: 14

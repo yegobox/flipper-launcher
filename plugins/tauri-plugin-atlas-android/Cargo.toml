@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-atlas-android"
+version = "0.1.0"
+description = "Atlas's Android bridge: PackageInstaller installs, app launches, Play links and the background update worker"
+edition = "2021"
+rust-version = "1.95"
+links = "tauri-plugin-atlas-android"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

@@ -10,11 +10,15 @@
 //! it in their own OS data dirs, so swapping a version folder leaves it alone.
 
 use serde::{Deserialize, Serialize};
+#[cfg(desktop)]
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(desktop)]
+use std::path::PathBuf;
 
+#[cfg(desktop)]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InstallState {
@@ -32,10 +36,12 @@ pub struct InstallState {
     pub entries: BTreeMap<String, String>,
 }
 
+#[cfg(desktop)]
 pub struct AppPaths {
     root: PathBuf,
 }
 
+#[cfg(desktop)]
 impl AppPaths {
     /// `id` must already have passed `manifest::valid_id`.
     pub fn new(apps_root: &Path, id: &str) -> Self {
@@ -124,6 +130,7 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(desktop)]
     #[test]
     fn state_round_trips_and_defaults_when_missing() {
         let dir = tempfile::tempdir().unwrap();

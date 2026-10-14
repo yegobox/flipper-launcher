@@ -130,12 +130,41 @@ jobs:
           includeUpdaterJson: false
           args: ${{ matrix.args }}
 
-  # Only when all three platforms built: add fixed-name installer copies (the
+  # Atlas for Android: a signed universal APK, plus the .sig Atlas itself
+  # checks before installing its own update.
+  android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ID: ${{ needs.create-release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Name
+        run: echo "APK=Atlas_$(jq -r .version src-tauri/tauri.conf.json)_android.apk" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/android-apk
+        with:
+          keystore-base64: ${{ secrets.ATLAS_ANDROID_KEYSTORE_BASE64 }}
+          keystore-password: ${{ secrets.ATLAS_ANDROID_KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.ATLAS_ANDROID_KEY_ALIAS }}
+          output: ${{ env.APK }}
+      - name: Sign for the updater and upload
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npx tauri signer sign "$APK"
+          for f in "$APK" "$APK.sig"; do
+            gh api --method POST -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$ID/assets?name=$(basename "$f")" --input "$f" --jq .name
+          done
+
+  # Only when every platform built: add fixed-name installer copies (the
   # website links releases/latest/download/<name> never change), write the
   # updater feed latest.json, then publish the draft as Latest. A partial build
   # stays a draft, so "Latest" never points at a release missing a platform.
   publish:
-    needs: [create-release, release]
+    needs: [create-release, release, android]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,13 +186,18 @@ jobs:
           pick() { local f; f="$(find dl -maxdepth 1 -name "$1" | head -1)"; [[ -n "$f" ]] || { echo "::error::no $1 in the draft"; exit 1; }; echo "$f"; }
           WIN="$(pick '*_x64-setup.exe')"; DMG="$(pick '*_universal.dmg')"
           MACUPD="$(pick '*_universal.app.tar.gz')"; APPIMG="$(pick '*_amd64.AppImage')"; DEB="$(pick '*_amd64.deb')"
+          APK="$(pick '*_android.apk')"
+          BT="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          APK_CODE="$("$BT/aapt2" dump badging "$APK" | sed -nE "s/.* versionCode='([0-9]+)'.*/\1/p" | head -1)"
+          [[ -n "$APK_CODE" ]] || { echo "::error::could not read the APK versionCode"; exit 1; }
           cp "$WIN" out/Atlas-Windows-x64-setup.exe
           cp "$DMG" out/Atlas-macOS.dmg
           cp "$APPIMG" out/Atlas-Linux-x86_64.AppImage
           cp "$DEB" out/Atlas-Linux-amd64.deb
-          python3 - "$VERSION" "$TAG" "$GITHUB_REPOSITORY" "$WIN" "$MACUPD" "$APPIMG" "$DEB" > out/latest.json <<'PY'
-          import json, sys, os, urllib.parse, datetime
-          version, tag, repo, win, mac, appimg, deb = sys.argv[1:]
+          cp "$APK" out/Atlas-Android.apk
+          python3 - "$VERSION" "$TAG" "$GITHUB_REPOSITORY" "$WIN" "$MACUPD" "$APPIMG" "$DEB" "$APK" "$APK_CODE" > out/latest.json <<'PY'
+          import json, sys, os, urllib.parse, datetime, hashlib
+          version, tag, repo, win, mac, appimg, deb, apk, apk_code = sys.argv[1:]
           def entry(path):
               sig = open(path + ".sig").read().strip()
               url = f"https://github.com/{repo}/releases/download/{tag}/{urllib.parse.quote(os.path.basename(path))}"
@@ -174,6 +208,10 @@ jobs:
               p[f"darwin-{arch}"] = p[f"darwin-{arch}-app"] = entry(mac)
           p["linux-x86_64"] = p["linux-x86_64-appimage"] = entry(appimg)
           p["linux-x86_64-deb"] = entry(deb)
+          # Android Atlas reads this itself (Tauri's desktop updater ignores it):
+          # it compares version_code and checks sha256 + signature.
+          p["android"] = {**entry(apk), "version_code": int(apk_code), "size": os.path.getsize(apk),
+                          "sha256": hashlib.sha256(open(apk, "rb").read()).hexdigest()}
           print(json.dumps({
               "version": version,
               "notes": "Download the installer for your computer below. Installed copies of Atlas update themselves.",

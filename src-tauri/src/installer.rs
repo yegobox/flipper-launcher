@@ -7,16 +7,21 @@
 //! Tauri's updater uses: `.sig` files from `tauri signer sign`, public key in
 //! `tauri.conf.json` → `plugins.updater.pubkey`.
 
-use crate::manifest::{parse_version, Release};
-use crate::store::{AppPaths, InstallState};
+use crate::manifest::Release;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::StreamExt;
 use minisign_verify::{PublicKey, Signature};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
+#[cfg(desktop)]
+use {
+    crate::manifest::parse_version,
+    crate::store::{AppPaths, InstallState},
+    std::collections::BTreeSet,
+    std::path::{Component, PathBuf},
+};
 
 pub async fn download(
     client: &reqwest::Client,
@@ -87,6 +92,7 @@ pub fn verify_archive(archive: &Path, release: &Release, pubkey_b64: &str) -> Re
         .map_err(|_| "release was not signed with the Yegobox release key".to_string())
 }
 
+#[cfg(desktop)]
 /// The manifest's `entry` must stay inside the version folder.
 pub fn safe_entry(entry: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(entry);
@@ -95,6 +101,7 @@ pub fn safe_entry(entry: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("unsafe entry path in catalog: {entry:?}"))
 }
 
+#[cfg(desktop)]
 pub fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
     let name = archive
         .file_name()
@@ -117,6 +124,7 @@ pub fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg(desktop)]
 /// Verify and extract `archive`, then make it current, or stage it for the
 /// next launch when the app is running. Returns the new state.
 pub fn stage(
@@ -168,6 +176,7 @@ pub fn stage(
     Ok(state)
 }
 
+#[cfg(desktop)]
 fn promote(state: &mut InstallState, version: String) {
     if state.current.as_deref() != Some(version.as_str()) {
         state.previous = state.current.take();
@@ -176,6 +185,7 @@ fn promote(state: &mut InstallState, version: String) {
     state.staged = None;
 }
 
+#[cfg(desktop)]
 /// Swap in a staged version. Call only while the app is not running.
 pub fn apply_staged(paths: &AppPaths) -> Result<bool, String> {
     let mut state = paths.load();
@@ -192,6 +202,7 @@ pub fn apply_staged(paths: &AppPaths) -> Result<bool, String> {
     Ok(true)
 }
 
+#[cfg(desktop)]
 /// Go back to `previous`. The abandoned version is skipped by auto-update
 /// until a newer one is published.
 pub fn rollback(paths: &AppPaths) -> Result<String, String> {
@@ -211,6 +222,7 @@ pub fn rollback(paths: &AppPaths) -> Result<String, String> {
     Ok(previous)
 }
 
+#[cfg(desktop)]
 /// Delete every version folder except current, previous and staged.
 /// Failures are ignored: Windows can hold a file open, and the next prune retries.
 pub fn prune(paths: &AppPaths, state: &mut InstallState) {
@@ -235,7 +247,7 @@ pub fn prune(paths: &AppPaths, state: &mut InstallState) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, desktop))]
 mod tests {
     use super::*;
     use std::io::Cursor;

@@ -1,6 +1,6 @@
 [package]
 name = "yegobox-launcher"
-version = "0.2.2"
+version = "0.3.0"
 description = "Installs Yegobox apps and keeps them up to date"
 authors = ["Yegobox <info@yegobox.com>"]
 edition = "2021"
@@ -15,7 +15,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = "0.23.1"
-flate2 = "1.1.10"
 futures-util = "0.3.34"
 minisign-verify = "0.3.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream"] }
@@ -23,17 +22,29 @@ semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.0"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tokio = { version = "1.53.2", features = ["time"] }
+
+# Desktop: versioned-folder installs (zip/tar), process checks, tray,
+# self-update, autostart and single instance.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+flate2 = "1.1.10"
 sysinfo = "0.39.6"
 tar = "0.4.46"
-tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
-tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
-tokio = { version = "1.53.2", features = ["time"] }
 zip = "9.0.2"
 
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-single-instance = "2"
+# Android: the Kotlin installer bridge, JNI for the background worker, and
+# Mozilla's root certificates (reqwest's platform verifier needs extra
+# Kotlin wiring on Android; a fixed root store doesn't).
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+tauri-plugin-atlas-android = { path = "../plugins/tauri-plugin-atlas-android" }
+tokio = { version = "1.53.2", features = ["time", "rt"] }
+webpki-root-certs = "1"
 
 [target."cfg(windows)".dependencies]
 mslnk = "0.1.8"
