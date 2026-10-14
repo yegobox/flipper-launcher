@@ -80,13 +80,16 @@ jobs:
           disable-animations: true
           script: |
             adb install -r atlas-debug.apk
+            adb shell pm grant com.yegobox.launcher android.permission.POST_NOTIFICATIONS
             adb logcat -c
             adb shell monkey -p com.yegobox.launcher -c android.intent.category.LAUNCHER 1
             sleep 30
             adb exec-out screencap -p > smoke.png
             adb logcat -d > logcat.txt
-            grep -E "FATAL|AndroidRuntime|panicked|RustStdoutStderr|Tauri|atlas|yegobox" logcat.txt | tail -120 || true
-            adb shell pidof com.yegobox.launcher || (echo "::error::Atlas is not running 30 s after launch" && exit 1)
+            adb shell pidof com.yegobox.launcher > pid.txt || true
+            adb logcat -d --pid="$(cat pid.txt)" > app-log.txt || true
+            grep -E "FATAL|panicked|Tauri|RustStdoutStderr|chromium|Console" app-log.txt | tail -80 || true
+            test -s pid.txt || (echo "::error::Atlas is not running 30 s after launch" && exit 1)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -94,4 +97,5 @@ jobs:
           path: |
             smoke.png
             logcat.txt
+            app-log.txt
           if-no-files-found: ignore
