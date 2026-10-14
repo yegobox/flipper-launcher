@@ -50,7 +50,7 @@ jobs:
           path: Atlas-Android.apk
           retention-days: 14
 
-  # Boots an Android 14 emulator, installs a debug x86_64 build, launches
+  # Boots an Android 14 emulator, installs a release x86_64 build, launches
   # Atlas and fails if it isn't running 30 s later. The screenshot and logcat
   # are uploaded either way, so a crash on a phone can be read here.
   android-smoke:
@@ -63,14 +63,15 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # A release build (minified, signed with the real key) like the one
+      # phones download, only for the emulator's x86_64 instead of ARM.
       - uses: ./.github/actions/android-apk
         with:
-          keystore-base64: unused
-          keystore-password: unused
-          key-alias: unused
-          output: atlas-debug.apk
+          keystore-base64: ${{ secrets.ATLAS_ANDROID_KEYSTORE_BASE64 }}
+          keystore-password: ${{ secrets.ATLAS_ANDROID_KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.ATLAS_ANDROID_KEY_ALIAS }}
+          output: atlas-smoke.apk
           targets: x86_64
-          debug: "true"
       - name: Run on an emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -79,7 +80,7 @@ jobs:
           target: google_apis
           disable-animations: true
           script: |
-            adb install -r atlas-debug.apk
+            adb install -r atlas-smoke.apk
             adb shell pm grant com.yegobox.launcher android.permission.POST_NOTIFICATIONS
             adb logcat -c
             adb shell monkey -p com.yegobox.launcher -c android.intent.category.LAUNCHER 1
