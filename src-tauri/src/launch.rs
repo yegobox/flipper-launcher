@@ -13,7 +13,9 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 /// never swap a version (or start a second copy) underneath a running one.
 pub fn is_running(paths: &AppPaths) -> bool {
     let versions = paths.versions();
-    let versions = versions.canonicalize().unwrap_or(versions);
+    // dunce, not std: on Windows std returns `\\?\C:\…`, which never prefixes
+    // the `C:\…` paths processes report, so a running app looked closed.
+    let versions = dunce::canonicalize(&versions).unwrap_or(versions);
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,

@@ -16,8 +16,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_updater::UpdaterExt;
 
-const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-const RETRY_AFTER_ERROR: Duration = Duration::from_secs(30 * 60);
+// apps.json is a few KB, so polling often is cheap; CI publishes on every merge.
+const CHECK_EVERY: Duration = Duration::from_secs(10 * 60);
+const RETRY_AFTER_ERROR: Duration = Duration::from_secs(5 * 60);
+/// How often a staged update is checked for its app having closed.
+const APPLY_EVERY: Duration = Duration::from_secs(15);
 const CRASH_WINDOW: Duration = Duration::from_secs(10);
 
 struct Shared {
@@ -321,25 +324,56 @@ async fn check_launcher_update(app: &AppHandle) {
     }
 }
 
-/// Refresh the catalog, update installed apps, update the launcher, repeat.
-async fn update_once(app: &AppHandle) -> Result<(), String> {
+/// Download every installed app that has a newer release (when auto-update
+/// is on). A running app gets it staged; `apply_closed` swaps it in later.
+async fn update_installed(app: &AppHandle) {
     let shared = app.state::<Shared>();
-    refresh(&shared).await?;
-    if shared.settings().auto_update {
-        let pending: Vec<String> = views(app, &shared)
-            .into_iter()
-            .filter(|v| v.status == "update_available")
-            .map(|v| v.id)
-            .collect();
-        for id in pending {
-            if let Err(e) = install(app, &id).await {
-                let _ = app.emit("error", format!("{id}: {e}"));
-            }
+    if !shared.settings().auto_update {
+        return;
+    }
+    let pending: Vec<String> = views(app, &shared)
+        .into_iter()
+        .filter(|v| v.status == "update_available")
+        .map(|v| v.id)
+        .collect();
+    for id in pending {
+        if let Err(e) = install(app, &id).await {
+            let _ = app.emit("error", format!("{id}: {e}"));
         }
     }
+}
+
+/// Refresh the catalog, update installed apps, update the launcher, repeat.
+async fn update_once(app: &AppHandle) -> Result<(), String> {
+    refresh(&app.state::<Shared>()).await?;
+    update_installed(app).await;
     check_launcher_update(app).await;
     let _ = app.emit("apps-changed", ());
     Ok(())
+}
+
+/// Swap in staged updates whose app has closed, so the next open (shortcut,
+/// pinned taskbar icon or anything else) starts the new version.
+fn apply_closed(app: &AppHandle) {
+    let shared = app.state::<Shared>();
+    let Some(manifest) = shared.manifest.lock().unwrap().clone() else {
+        return;
+    };
+    let busy = shared.busy.lock().unwrap().clone();
+    let mut changed = false;
+    for a in manifest.apps.iter().filter(|a| valid_id(&a.id)) {
+        let paths = shared.paths(&a.id);
+        if busy.contains(&a.id) || paths.load().staged.is_none() || launch::is_running(&paths) {
+            continue;
+        }
+        match installer::apply_staged(&paths) {
+            Ok(applied) => changed |= applied,
+            Err(e) => eprintln!("apply staged {}: {e}", a.id),
+        }
+    }
+    if changed {
+        let _ = app.emit("apps-changed", ());
+    }
 }
 
 fn start_updater(app: &AppHandle) {
@@ -353,7 +387,11 @@ fn start_updater(app: &AppHandle) {
                     RETRY_AFTER_ERROR
                 }
             };
-            tokio::time::sleep(wait).await;
+            let next = std::time::Instant::now() + wait;
+            while std::time::Instant::now() < next {
+                tokio::time::sleep(APPLY_EVERY).await;
+                apply_closed(&app);
+            }
         }
     });
 }
@@ -380,8 +418,20 @@ fn launch_from_shortcut(app: &AppHandle, id: String, exit_when_done: bool) {
     tauri::async_runtime::spawn(async move {
         let _ = refresh(&app.state::<Shared>()).await;
         match open(&app, &id).await {
-            Ok(false) if exit_when_done => app.exit(0),
-            Ok(false) => {}
+            // Started cold (Atlas was not in the tray): stay there to keep
+            // updating if the user allows a background launcher, otherwise
+            // fetch what is new for the next open and exit.
+            Ok(false) if exit_when_done => {
+                if app.state::<Shared>().settings().launch_at_login {
+                    start_updater(&app);
+                } else {
+                    update_installed(&app).await;
+                    app.exit(0);
+                }
+            }
+            // The app is open on what was installed; fetch a newer build now
+            // rather than at the next scheduled check.
+            Ok(false) => update_installed(&app).await,
             Ok(true) => show_main(&app),
             Err(e) => {
                 let _ = app.emit("error", e);
