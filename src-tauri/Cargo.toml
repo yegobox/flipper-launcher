@@ -1,6 +1,6 @@
 [package]
 name = "yegobox-launcher"
-version = "0.3.1"
+version = "0.3.2"
 description = "Installs Yegobox apps and keeps them up to date"
 authors = ["Yegobox <info@yegobox.com>"]
 edition = "2021"
@@ -29,6 +29,7 @@ tokio = { version = "1.53.2", features = ["time"] }
 # Desktop: versioned-folder installs (zip/tar), process checks, tray,
 # self-update, autostart and single instance.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+dunce = "1.0.5"
 flate2 = "1.1.10"
 sysinfo = "0.39.6"
 tar = "0.4.46"

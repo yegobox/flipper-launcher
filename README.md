@@ -54,6 +54,11 @@ Install root: `<app_local_data_dir>/apps/<id>/`. On Windows that is
 their own data (Ditto, the DB, preferences) in their own data directories, so
 swapping versions leaves it alone.
 
+**Uninstall** (an app card's "…" menu, desktop only): deletes the install
+root and the app's shortcuts. It is refused while the app runs or updates. The
+app's own data stays, so a reinstall picks up where the user left off. Android
+apps are removed from the system settings as usual.
+
 **Shortcuts:**
 - On first install, Windows gets a Start-menu and desktop shortcut, and Linux
   gets a `.desktop` entry. Both run `launcher --launch flipper`, which applies

@@ -63,6 +63,8 @@ export const api = {
   install: (id: string) => invoke<void>("install_app", { id }),
   open: (id: string) => invoke<boolean>("open_app", { id }),
   rollback: (id: string) => invoke<string>("rollback_app", { id }),
+  /** Desktop only; Android apps are removed from the system settings. */
+  uninstall: (id: string) => invoke<void>("uninstall_app", { id }),
   takeNotice: () => invoke<Notice | null>("take_notice"),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),

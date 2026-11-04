@@ -16,8 +16,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_updater::UpdaterExt;
 
-const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-const RETRY_AFTER_ERROR: Duration = Duration::from_secs(30 * 60);
+// apps.json is a few KB, so polling often is cheap; CI publishes on every merge.
+const CHECK_EVERY: Duration = Duration::from_secs(10 * 60);
+const RETRY_AFTER_ERROR: Duration = Duration::from_secs(5 * 60);
+/// How often a staged update is checked for its app having closed.
+const APPLY_EVERY: Duration = Duration::from_secs(15);
 const CRASH_WINDOW: Duration = Duration::from_secs(10);
 
 struct Shared {
@@ -41,6 +44,16 @@ impl Shared {
 
     fn settings(&self) -> Settings {
         store::load_settings(&self.config_dir)
+    }
+
+    /// Display name from the catalog, or the id when the catalog lacks it.
+    fn app_name(&self, id: &str) -> String {
+        self.manifest
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|m| m.app(id).map(|a| a.name.clone()))
+            .unwrap_or_else(|| id.to_string())
     }
 }
 
@@ -289,16 +302,9 @@ async fn open(app: &AppHandle, id: &str) -> Result<bool, String> {
     let Some(previous) = state.previous.clone() else {
         return Ok(false);
     };
-    let name = shared
-        .manifest
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|m| m.app(id).map(|a| a.name.clone()))
-        .unwrap_or_else(|| id.to_string());
     *shared.notice.lock().unwrap() = Some(Notice {
         app_id: id.to_string(),
-        name,
+        name: shared.app_name(id),
         version: current,
         previous,
     });
@@ -306,40 +312,85 @@ async fn open(app: &AppHandle, id: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-async fn check_launcher_update(app: &AppHandle) {
-    let Ok(updater) = app.updater() else { return };
-    match updater.check().await {
-        Ok(Some(update)) => {
-            let version = update.version.clone();
-            if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
-                *app.state::<Shared>().launcher_update.lock().unwrap() = Some(version.clone());
-                let _ = app.emit("launcher-update-ready", version);
-            }
+/// On Windows a successful install never returns: the NSIS installer takes
+/// over, closes Atlas and starts the new version.
+async fn check_launcher_update(app: &AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
+    let version = update.version.clone();
+    let ready = app
+        .state::<Shared>()
+        .launcher_update
+        .lock()
+        .unwrap()
+        .clone();
+    // Already installed and waiting for a restart; don't fetch it every check.
+    if ready.as_deref() == Some(version.as_str()) {
+        return Ok(());
+    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    *app.state::<Shared>().launcher_update.lock().unwrap() = Some(version.clone());
+    let _ = app.emit("launcher-update-ready", version);
+    Ok(())
+}
+
+/// Download every installed app that has a newer release (when auto-update
+/// is on). A running app gets it staged; `apply_closed` swaps it in later.
+async fn update_installed(app: &AppHandle) {
+    let shared = app.state::<Shared>();
+    if !shared.settings().auto_update {
+        return;
+    }
+    let pending: Vec<String> = views(app, &shared)
+        .into_iter()
+        .filter(|v| v.status == "update_available")
+        .map(|v| v.id)
+        .collect();
+    for id in pending {
+        if let Err(e) = install(app, &id).await {
+            let _ = app.emit("error", format!("{id}: {e}"));
         }
-        Ok(None) => {}
-        Err(e) => eprintln!("launcher update check: {e}"),
     }
 }
 
 /// Refresh the catalog, update installed apps, update the launcher, repeat.
 async fn update_once(app: &AppHandle) -> Result<(), String> {
+    refresh(&app.state::<Shared>()).await?;
+    update_installed(app).await;
+    let launcher = check_launcher_update(app).await;
+    let _ = app.emit("apps-changed", ());
+    // Surfaced, not just logged: a launcher that silently stops updating
+    // itself also stops getting the fixes that would tell users why.
+    launcher.map_err(|e| format!("Atlas could not update itself: {e}"))
+}
+
+/// Swap in staged updates whose app has closed, so the next open (shortcut,
+/// pinned taskbar icon or anything else) starts the new version.
+fn apply_closed(app: &AppHandle) {
     let shared = app.state::<Shared>();
-    refresh(&shared).await?;
-    if shared.settings().auto_update {
-        let pending: Vec<String> = views(app, &shared)
-            .into_iter()
-            .filter(|v| v.status == "update_available")
-            .map(|v| v.id)
-            .collect();
-        for id in pending {
-            if let Err(e) = install(app, &id).await {
-                let _ = app.emit("error", format!("{id}: {e}"));
-            }
+    let Some(manifest) = shared.manifest.lock().unwrap().clone() else {
+        return;
+    };
+    let busy = shared.busy.lock().unwrap().clone();
+    let mut changed = false;
+    for a in manifest.apps.iter().filter(|a| valid_id(&a.id)) {
+        let paths = shared.paths(&a.id);
+        if busy.contains(&a.id) || paths.load().staged.is_none() || launch::is_running(&paths) {
+            continue;
+        }
+        match installer::apply_staged(&paths) {
+            Ok(applied) => changed |= applied,
+            Err(e) => eprintln!("apply staged {}: {e}", a.id),
         }
     }
-    check_launcher_update(app).await;
-    let _ = app.emit("apps-changed", ());
-    Ok(())
+    if changed {
+        let _ = app.emit("apps-changed", ());
+    }
 }
 
 fn start_updater(app: &AppHandle) {
@@ -353,7 +404,11 @@ fn start_updater(app: &AppHandle) {
                     RETRY_AFTER_ERROR
                 }
             };
-            tokio::time::sleep(wait).await;
+            let next = std::time::Instant::now() + wait;
+            while std::time::Instant::now() < next {
+                tokio::time::sleep(APPLY_EVERY).await;
+                apply_closed(&app);
+            }
         }
     });
 }
@@ -380,8 +435,20 @@ fn launch_from_shortcut(app: &AppHandle, id: String, exit_when_done: bool) {
     tauri::async_runtime::spawn(async move {
         let _ = refresh(&app.state::<Shared>()).await;
         match open(&app, &id).await {
-            Ok(false) if exit_when_done => app.exit(0),
-            Ok(false) => {}
+            // Started cold (Atlas was not in the tray): stay there to keep
+            // updating if the user allows a background launcher, otherwise
+            // fetch what is new for the next open and exit.
+            Ok(false) if exit_when_done => {
+                if app.state::<Shared>().settings().launch_at_login {
+                    start_updater(&app);
+                } else {
+                    update_installed(&app).await;
+                    app.exit(0);
+                }
+            }
+            // The app is open on what was installed; fetch a newer build now
+            // rather than at the next scheduled check.
+            Ok(false) => update_installed(&app).await,
             Ok(true) => show_main(&app),
             Err(e) => {
                 let _ = app.emit("error", e);
@@ -466,6 +533,44 @@ async fn rollback_app(
     shared.notice.lock().unwrap().take();
     let _ = app.emit("apps-changed", ());
     Ok(version)
+}
+
+/// Remove an installed app and its shortcuts. The app's own data (Ditto, its
+/// DB, preferences) lives outside the install folder and stays, so installing
+/// it again picks up where the user left off.
+#[tauri::command]
+async fn uninstall_app(
+    app: AppHandle,
+    shared: State<'_, Shared>,
+    id: String,
+) -> Result<(), String> {
+    if !valid_id(&id) {
+        return Err(format!("unknown app {id}"));
+    }
+    let name = shared.app_name(&id);
+    // Holding the busy flag keeps a background update from reinstalling it mid-delete.
+    if !shared.busy.lock().unwrap().insert(id.clone()) {
+        return Err(format!("{name} is updating; try again when it finishes"));
+    }
+    let _guard = BusyGuard(&shared, id.clone());
+    let paths = shared.paths(&id);
+    if launch::is_running(&paths) {
+        return Err(format!("close {name} before uninstalling it"));
+    }
+    if let Err(e) = launch::remove_shortcut(&id, &name) {
+        eprintln!("shortcut for {id}: {e}");
+    }
+    let removed = tauri::async_runtime::spawn_blocking(move || paths.remove())
+        .await
+        .map_err(|e| e.to_string())?;
+    {
+        let mut notice = shared.notice.lock().unwrap();
+        if notice.as_ref().is_some_and(|n| n.app_id == id) {
+            notice.take();
+        }
+    }
+    let _ = app.emit("apps-changed", ());
+    removed.map_err(|e| format!("{name} is uninstalled, but some files could not be removed: {e}"))
 }
 
 #[tauri::command]
@@ -633,6 +738,7 @@ pub fn run() {
             install_app,
             open_app,
             rollback_app,
+            uninstall_app,
             take_notice,
             get_settings,
             set_settings,

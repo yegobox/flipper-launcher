@@ -29,6 +29,8 @@ export default function App() {
   const [progress, setProgress] = useState<Record<string, Progress>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  /** The app the user asked to uninstall, until they confirm or cancel. */
+  const [uninstalling, setUninstalling] = useState<AppView | null>(null);
   const [info, setInfo] = useState<LauncherInfo | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -190,6 +192,29 @@ export default function App() {
           </Banner>
         )}
 
+        {uninstalling && (
+          <Banner tag="Uninstall" tone="amber" onClose={() => setUninstalling(null)}>
+            <span>
+              Uninstall {uninstalling.name}? Its data stays on this computer, so installing it again picks up where you left off.
+            </span>
+            <div className="banner-actions">
+              <button className="text-link" onClick={() => setUninstalling(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn-solid"
+                onClick={run(() => {
+                  const id = uninstalling.id;
+                  setUninstalling(null);
+                  return api.uninstall(id);
+                })}
+              >
+                Uninstall
+              </button>
+            </div>
+          </Banner>
+        )}
+
         {error && (
           <Banner tag="Error" tone="red" onClose={() => setError(null)}>
             <span>{error}</span>
@@ -253,6 +278,7 @@ export default function App() {
               onInstall={run(() => api.install(app.id))}
               onOpen={run(() => api.open(app.id))}
               onRollback={run(() => api.rollback(app.id))}
+              onUninstall={isAndroid ? undefined : () => setUninstalling(app)}
               onRestart={() => api.restart()}
             />
           ))}
@@ -312,6 +338,8 @@ function AppCard(props: {
   onInstall: () => void;
   onOpen: () => void;
   onRollback: () => void;
+  /** Absent on Android. */
+  onUninstall?: () => void;
   onRestart: () => void;
 }) {
   const { app, progress } = props;
@@ -460,6 +488,18 @@ function AppCard(props: {
                     }}
                   >
                     Roll back to {app.previous}
+                  </button>
+                )}
+                {props.onUninstall && app.installed && app.status !== "installing" && (
+                  <button
+                    disabled={app.running}
+                    title={app.running ? `Close ${app.name} first` : undefined}
+                    onClick={() => {
+                      setMenu(false);
+                      props.onUninstall!();
+                    }}
+                  >
+                    {app.running ? `Close ${app.name} to uninstall` : "Uninstall"}
                   </button>
                 )}
                 <button
