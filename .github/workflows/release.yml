@@ -4,8 +4,11 @@ name: Release launcher
 # publishes release launcher-v<version> with latest.json, which installed
 # launchers poll (tauri.conf.json → plugins.updater.endpoints) to update themselves.
 #
-# Bump "version" in src-tauri/tauri.conf.json, src-tauri/Cargo.toml and
-# package.json, then push tag launcher-v<version>.
+# Runs on every merge to main, so a fix reaches installed launchers without
+# anyone remembering to tag. The version is tauri.conf.json's when that one is
+# unreleased (a deliberate bump, e.g. to 0.4.0), otherwise the next patch after
+# the newest release in that major.minor. The repo's version files are not
+# rewritten; the build gets the computed version through tauri.conf.json.
 #
 # Secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD (same
 # key as yegobox/flipper's desktop_launcher_release.yml), plus for macOS
@@ -14,11 +17,19 @@ name: Release launcher
 
 on:
   push:
-    tags: ["launcher-v*"]
+    branches: [main]
+    # Docs-only merges ship nothing to users.
+    paths-ignore: ["**/*.md", ".github/workflows/ci.yml"]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# One release at a time: two quick merges must not both claim the same version.
+# A queued run builds the newer main, so the one it replaces loses nothing.
+concurrency:
+  group: release-launcher
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -46,26 +57,35 @@ jobs:
     outputs:
       id: ${{ steps.r.outputs.id }}
       tag: ${{ steps.r.outputs.tag }}
+      version: ${{ steps.r.outputs.version }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - id: r
         run: |
-          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          set -euo pipefail
+          BASE="$(jq -r .version src-tauri/tauri.conf.json)"
+          [[ "$BASE" =~ ^([0-9]+\.[0-9]+)\.([0-9]+)$ ]] || { echo "::error::tauri.conf.json version $BASE is not MAJOR.MINOR.PATCH"; exit 1; }
+          MM="${BASH_REMATCH[1]}"; PATCH="${BASH_REMATCH[2]}"
+          # Highest published patch in this major.minor (drafts are failed runs, not releases).
+          TOP="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select(.draft | not) | .tag_name' \
+            | awk -v p="launcher-v$MM." 'index($0, p) == 1 && substr($0, length(p) + 1) ~ /^[0-9]+$/ { print substr($0, length(p) + 1) }' \
+            | sort -n | tail -1)"
+          if [[ -n "$TOP" ]] && (( TOP + 1 > PATCH )); then PATCH=$((TOP + 1)); fi
+          VERSION="$MM.$PATCH"
           TAG="launcher-v$VERSION"
-          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::$TAG is already published; bump the version"; exit 1
-          fi
-          # Re-run of a failed release: reuse its draft.
+          echo "Releasing $VERSION (tauri.conf.json: $BASE, newest $MM release: ${TOP:-none})"
+          # Re-run of a failed release: reuse its draft, pointed at this commit.
           ID="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | head -1)"
-          if [[ -z "$ID" ]]; then
+          if [[ -n "$ID" ]]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f target_commitish="$GITHUB_SHA" --jq .id >/dev/null
+          else
             ID="$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
               -f name="Atlas v$VERSION" -F draft=true \
               -f body="Download the installer for your computer below. Installed copies of Atlas update themselves." --jq .id)"
           fi
-          echo "id=$ID" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          { echo "id=$ID"; echo "tag=$TAG"; echo "version=$VERSION"; } >> "$GITHUB_OUTPUT"
 
   release:
     needs: create-release
@@ -82,6 +102,12 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+      # Bundle names, the app's own version and latest.json all come from here.
+      - name: Version ${{ needs.create-release.outputs.version }}
+        shell: bash
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: node -e 'const fs = require("fs"), f = "src-tauri/tauri.conf.json"; const c = JSON.parse(fs.readFileSync(f)); c.version = process.env.VERSION; fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n")'
       - name: Linux webview deps
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
@@ -138,10 +164,14 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ID: ${{ needs.create-release.outputs.id }}
+      VERSION: ${{ needs.create-release.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Name
-        run: echo "APK=Atlas_$(jq -r .version src-tauri/tauri.conf.json)_android.apk" >> "$GITHUB_ENV"
+      # The APK's versionCode is derived from this version.
+      - name: Version ${{ needs.create-release.outputs.version }}
+        run: |
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > conf.tmp && mv conf.tmp src-tauri/tauri.conf.json
+          echo "APK=Atlas_${VERSION}_android.apk" >> "$GITHUB_ENV"
       - uses: ./.github/actions/android-apk
         with:
           keystore-base64: ${{ secrets.ATLAS_ANDROID_KEYSTORE_BASE64 }}
@@ -170,6 +200,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ID: ${{ needs.create-release.outputs.id }}
       TAG: ${{ needs.create-release.outputs.tag }}
+      VERSION: ${{ needs.create-release.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Download build outputs
@@ -182,7 +213,6 @@ jobs:
       - name: Fixed-name copies + latest.json
         run: |
           set -euo pipefail
-          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           pick() { local f; f="$(find dl -maxdepth 1 -name "$1" | head -1)"; [[ -n "$f" ]] || { echo "::error::no $1 in the draft"; exit 1; }; echo "$f"; }
           WIN="$(pick '*_x64-setup.exe')"; DMG="$(pick '*_universal.dmg')"
           MACUPD="$(pick '*_universal.app.tar.gz')"; APPIMG="$(pick '*_amd64.AppImage')"; DEB="$(pick '*_amd64.deb')"
