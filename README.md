@@ -10,7 +10,7 @@ their data and update in place.
 yegobox/flipper  desktop_launcher_release.yml
   └─ release desktop-v<ver>     flipper-{windows-x86_64.zip, darwin.tar.gz, linux-x86_64.tar.gz} + .sig
   └─ release launcher-manifest  apps.json   ← the catalog this launcher reads
-yegobox/flipper-launcher  release.yml (tag launcher-v*)
+yegobox/flipper-launcher  release.yml (every merge to main)
   └─ release launcher-v<ver>    installers + latest.json   ← the launcher's own updates
 ```
 
@@ -106,6 +106,12 @@ python3 -m http.server 8000
    `.github/workflows/release.yml`.
 3. **Windows:** builds are unsigned for now, so SmartScreen shows "unknown
    publisher" until a code-signing certificate is added.
-4. To release, bump the version in `tauri.conf.json`, `Cargo.toml` and
-   `package.json`, then push the tag `launcher-v<version>`. The workflow also
-   uploads fixed-name copies of each installer for the download links above.
+4. **Releases are automatic.** Every merge to `main` (except docs-only
+   changes) publishes the next patch release. If the version in
+   `tauri.conf.json` is not released yet, that version is used. Otherwise the
+   workflow uses the next patch after the newest release in that
+   `MAJOR.MINOR`. To start a new line, bump `tauri.conf.json`, `Cargo.toml` and
+   `package.json` (for example to `0.4.0`) in the PR. A release can also be
+   re-run from the Actions tab (`workflow_dispatch`). The workflow uploads
+   fixed-name copies of each installer for the download links above, and it
+   publishes only after every platform builds.
