@@ -45,6 +45,16 @@ impl Shared {
     fn settings(&self) -> Settings {
         store::load_settings(&self.config_dir)
     }
+
+    /// Display name from the catalog, or the id when the catalog lacks it.
+    fn app_name(&self, id: &str) -> String {
+        self.manifest
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|m| m.app(id).map(|a| a.name.clone()))
+            .unwrap_or_else(|| id.to_string())
+    }
 }
 
 /// Shown once in the window, e.g. after an update crashed on start.
@@ -292,16 +302,9 @@ async fn open(app: &AppHandle, id: &str) -> Result<bool, String> {
     let Some(previous) = state.previous.clone() else {
         return Ok(false);
     };
-    let name = shared
-        .manifest
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|m| m.app(id).map(|a| a.name.clone()))
-        .unwrap_or_else(|| id.to_string());
     *shared.notice.lock().unwrap() = Some(Notice {
         app_id: id.to_string(),
-        name,
+        name: shared.app_name(id),
         version: current,
         previous,
     });
@@ -309,19 +312,31 @@ async fn open(app: &AppHandle, id: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-async fn check_launcher_update(app: &AppHandle) {
-    let Ok(updater) = app.updater() else { return };
-    match updater.check().await {
-        Ok(Some(update)) => {
-            let version = update.version.clone();
-            if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
-                *app.state::<Shared>().launcher_update.lock().unwrap() = Some(version.clone());
-                let _ = app.emit("launcher-update-ready", version);
-            }
-        }
-        Ok(None) => {}
-        Err(e) => eprintln!("launcher update check: {e}"),
+/// On Windows a successful install never returns: the NSIS installer takes
+/// over, closes Atlas and starts the new version.
+async fn check_launcher_update(app: &AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
+    let version = update.version.clone();
+    let ready = app
+        .state::<Shared>()
+        .launcher_update
+        .lock()
+        .unwrap()
+        .clone();
+    // Already installed and waiting for a restart; don't fetch it every check.
+    if ready.as_deref() == Some(version.as_str()) {
+        return Ok(());
     }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    *app.state::<Shared>().launcher_update.lock().unwrap() = Some(version.clone());
+    let _ = app.emit("launcher-update-ready", version);
+    Ok(())
 }
 
 /// Download every installed app that has a newer release (when auto-update
@@ -347,9 +362,11 @@ async fn update_installed(app: &AppHandle) {
 async fn update_once(app: &AppHandle) -> Result<(), String> {
     refresh(&app.state::<Shared>()).await?;
     update_installed(app).await;
-    check_launcher_update(app).await;
+    let launcher = check_launcher_update(app).await;
     let _ = app.emit("apps-changed", ());
-    Ok(())
+    // Surfaced, not just logged: a launcher that silently stops updating
+    // itself also stops getting the fixes that would tell users why.
+    launcher.map_err(|e| format!("Atlas could not update itself: {e}"))
 }
 
 /// Swap in staged updates whose app has closed, so the next open (shortcut,
@@ -518,6 +535,44 @@ async fn rollback_app(
     Ok(version)
 }
 
+/// Remove an installed app and its shortcuts. The app's own data (Ditto, its
+/// DB, preferences) lives outside the install folder and stays, so installing
+/// it again picks up where the user left off.
+#[tauri::command]
+async fn uninstall_app(
+    app: AppHandle,
+    shared: State<'_, Shared>,
+    id: String,
+) -> Result<(), String> {
+    if !valid_id(&id) {
+        return Err(format!("unknown app {id}"));
+    }
+    let name = shared.app_name(&id);
+    // Holding the busy flag keeps a background update from reinstalling it mid-delete.
+    if !shared.busy.lock().unwrap().insert(id.clone()) {
+        return Err(format!("{name} is updating; try again when it finishes"));
+    }
+    let _guard = BusyGuard(&shared, id.clone());
+    let paths = shared.paths(&id);
+    if launch::is_running(&paths) {
+        return Err(format!("close {name} before uninstalling it"));
+    }
+    if let Err(e) = launch::remove_shortcut(&id, &name) {
+        eprintln!("shortcut for {id}: {e}");
+    }
+    let removed = tauri::async_runtime::spawn_blocking(move || paths.remove())
+        .await
+        .map_err(|e| e.to_string())?;
+    {
+        let mut notice = shared.notice.lock().unwrap();
+        if notice.as_ref().is_some_and(|n| n.app_id == id) {
+            notice.take();
+        }
+    }
+    let _ = app.emit("apps-changed", ());
+    removed.map_err(|e| format!("{name} is uninstalled, but some files could not be removed: {e}"))
+}
+
 #[tauri::command]
 fn take_notice(shared: State<'_, Shared>) -> Option<Notice> {
     shared.notice.lock().unwrap().take()
@@ -683,6 +738,7 @@ pub fn run() {
             install_app,
             open_app,
             rollback_app,
+            uninstall_app,
             take_notice,
             get_settings,
             set_settings,
