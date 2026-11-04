@@ -428,6 +428,26 @@ mod tests {
         assert!(rollback(&paths).is_err(), "nothing left to roll back to");
     }
 
+    #[test]
+    fn uninstall_then_reinstall_starts_clean() {
+        let (dir, paths, keys) = setup();
+        for v in ["1.0.0", "1.1.0"] {
+            let (r, a) = zip_release(dir.path(), &keys, v, "flipper.exe");
+            stage(&paths, &r, &a, &keys.pubkey_b64, false).unwrap();
+        }
+        paths.remove().unwrap();
+        assert_eq!(paths.load(), InstallState::default());
+        assert!(!paths.versions().exists());
+
+        let (r, a) = zip_release(dir.path(), &keys, "1.1.0", "flipper.exe");
+        let s = stage(&paths, &r, &a, &keys.pubkey_b64, false).unwrap();
+        assert_eq!(s.current.as_deref(), Some("1.1.0"));
+        assert_eq!(
+            s.previous, None,
+            "nothing to roll back to after a reinstall"
+        );
+    }
+
     #[tokio::test]
     async fn download_streams_to_disk_and_reports_progress() {
         use std::io::{BufRead, BufReader};

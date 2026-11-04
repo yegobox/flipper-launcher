@@ -78,6 +78,18 @@ impl AppPaths {
         write_json(&self.state_file(), state)
     }
 
+    /// Uninstall: forget the install, then delete the app's folder. State goes
+    /// first so a delete Windows cuts short (a file held open) still reads as
+    /// "not installed"; the next install prunes whatever was left behind.
+    pub fn remove(&self) -> io::Result<()> {
+        let gone = |r: io::Result<()>| match r {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+        gone(fs::remove_file(self.state_file()))?;
+        gone(fs::remove_dir_all(&self.root))
+    }
+
     /// Absolute path of the executable for `version`, if it is installed.
     pub fn entry_path(&self, state: &InstallState, version: &str) -> Option<PathBuf> {
         let entry = state.entries.get(version)?;
@@ -144,6 +156,28 @@ mod tests {
         state.entries.insert("1.0.0".into(), "flipper.exe".into());
         paths.save(&state).unwrap();
         assert_eq!(paths.load(), state);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn remove_deletes_everything_and_tolerates_a_missing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(dir.path(), "flipper");
+        paths.remove().unwrap();
+
+        fs::create_dir_all(paths.version("1.0.0")).unwrap();
+        fs::write(paths.version("1.0.0").join("flipper.exe"), b"x").unwrap();
+        fs::create_dir_all(paths.downloads()).unwrap();
+        paths
+            .save(&InstallState {
+                current: Some("1.0.0".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        paths.remove().unwrap();
+        assert_eq!(paths.load(), InstallState::default());
+        assert!(!dir.path().join("flipper").exists());
+        assert!(dir.path().exists(), "other apps' folders are untouched");
     }
 
     #[test]
