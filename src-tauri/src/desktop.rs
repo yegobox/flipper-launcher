@@ -247,10 +247,11 @@ async fn install(app: &AppHandle, id: &str) -> Result<(), String> {
     .await
     .map_err(|e| e.to_string())??;
 
-    if first_install {
-        if let Err(e) = launch::install_shortcut(id, &entry.name) {
-            eprintln!("shortcut for {id}: {e}");
-        }
+    // Every install, not just the first: also refreshes the pinned icon and
+    // fixes pins left pointing at a version folder.
+    let create = first_install.then_some(entry.name.as_str());
+    if let Err(e) = launch::sync_shortcuts(&paths, id, create) {
+        eprintln!("shortcut for {id}: {e}");
     }
     let _ = app.emit("apps-changed", ());
     Ok(())
@@ -275,7 +276,7 @@ async fn open(app: &AppHandle, id: &str) -> Result<bool, String> {
                 .as_deref()
                 .and_then(|v| paths.entry_path(&state, v))
             {
-                let _ = launch::spawn(&entry);
+                let _ = launch::spawn(&entry, &[]);
             }
         }
         return Ok(false);
@@ -286,7 +287,8 @@ async fn open(app: &AppHandle, id: &str) -> Result<bool, String> {
     let entry = paths
         .entry_path(&state, &current)
         .ok_or("installation is damaged; install it again")?;
-    launch::spawn(&entry).map_err(|e| format!("could not start: {e}"))?;
+    let env = launch::taskbar_env(&paths, id, &shared.app_name(id));
+    launch::spawn(&entry, &env).map_err(|e| format!("could not start: {e}"))?;
     let _ = app.emit("apps-changed", ());
 
     if state.last_good.as_deref() == Some(current.as_str()) {
@@ -408,6 +410,30 @@ fn start_updater(app: &AppHandle) {
             while std::time::Instant::now() < next {
                 tokio::time::sleep(APPLY_EVERY).await;
                 apply_closed(&app);
+            }
+        }
+    });
+}
+
+/// At start: give every installed app's shortcuts and pins its taskbar
+/// identity, and repoint pins made at a version folder (launchers older than
+/// this one let that happen). Off the main thread; shell links are slow-ish.
+fn sync_all_shortcuts(apps_root: PathBuf) {
+    std::thread::spawn(move || {
+        let Ok(dirs) = std::fs::read_dir(&apps_root) else {
+            return;
+        };
+        for dir in dirs.flatten() {
+            let id = dir.file_name().to_string_lossy().into_owned();
+            if !valid_id(&id) {
+                continue;
+            }
+            let paths = AppPaths::new(&apps_root, &id);
+            if paths.load().current.is_none() {
+                continue;
+            }
+            if let Err(e) = launch::sync_shortcuts(&paths, &id, None) {
+                eprintln!("shortcuts for {id}: {e}");
             }
         }
     });
@@ -557,7 +583,7 @@ async fn uninstall_app(
     if launch::is_running(&paths) {
         return Err(format!("close {name} before uninstalling it"));
     }
-    if let Err(e) = launch::remove_shortcut(&id, &name) {
+    if let Err(e) = launch::remove_shortcut(&paths, &id) {
         eprintln!("shortcut for {id}: {e}");
     }
     let removed = tauri::async_runtime::spawn_blocking(move || paths.remove())
@@ -707,6 +733,7 @@ pub fn run() {
                 launcher_update: Mutex::new(None),
                 checked_at: Mutex::new(None),
             });
+            sync_all_shortcuts(app.state::<Shared>().apps_root.clone());
             let handle = app.handle().clone();
             if let Some(id) = install_id.clone() {
                 install_headless(&handle, id, true);
