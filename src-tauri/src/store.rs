@@ -63,6 +63,13 @@ impl AppPaths {
         self.root.join("downloads")
     }
 
+    /// A copy of the current entry kept outside `versions/`, so shortcut and
+    /// pin icons survive `prune` (Windows; the exe is only read for its icon).
+    #[cfg(windows)]
+    pub fn shortcut_icon(&self) -> PathBuf {
+        self.root.join("icon.exe")
+    }
+
     fn state_file(&self) -> PathBuf {
         self.root.join("state.json")
     }

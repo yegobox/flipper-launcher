@@ -19,6 +19,8 @@ mod store;
 mod desktop;
 #[cfg(desktop)]
 mod launch;
+#[cfg(windows)]
+mod winshell;
 
 #[cfg(target_os = "android")]
 mod android;
